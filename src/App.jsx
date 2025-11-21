@@ -1,70 +1,61 @@
+import Header from './components/Header'
+import Timeline from './components/Timeline'
+import BlastSim from './components/BlastSim'
+import { motion } from 'framer-motion'
+
 function App() {
+  const handleJump = (idx) => {
+    // For future: adjust sim parameters by timeline step
+    // Example: initial low energy, then spike, then fallout
+  }
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-      {/* Subtle pattern overlay */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(59,130,246,0.05),transparent_50%)]"></div>
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-900 to-black">
+      <div className="max-w-6xl mx-auto p-6 space-y-6">
+        <Header />
 
-      <div className="relative min-h-screen flex items-center justify-center p-8">
-        <div className="max-w-2xl w-full">
-          {/* Header with Flames icon */}
-          <div className="text-center mb-12">
-            <div className="inline-flex items-center justify-center mb-6">
-              <img
-                src="/flame-icon.svg"
-                alt="Flames"
-                className="w-24 h-24 drop-shadow-[0_0_25px_rgba(59,130,246,0.5)]"
-              />
-            </div>
-
-            <h1 className="text-5xl font-bold text-white mb-4 tracking-tight">
-              Flames Blue
-            </h1>
-
-            <p className="text-xl text-blue-200 mb-6">
-              Build applications through conversation
+        <div className="grid lg:grid-cols-2 gap-6 items-start">
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="space-y-4"
+          >
+            <h2 className="text-2xl font-bold text-white">Blast and Fallout Simulation</h2>
+            <p className="text-slate-300 text-sm">
+              This interactive scene approximates the steam and hydrogen explosions and the subsequent lofting of
+              particulates. It uses gravity, drag and wind advection to model particle motion. Use the controls to tweak
+              initial energy and drag to explore plausible envelopes. Note: this is an educational visualization, not a
+              forensic CFD reconstruction.
             </p>
-          </div>
+            <BlastSim />
+          </motion.div>
 
-          {/* Instructions */}
-          <div className="bg-slate-800/50 backdrop-blur-sm border border-blue-500/20 rounded-2xl p-8 shadow-xl mb-6">
-            <div className="flex items-start gap-4 mb-6">
-              <div className="flex-shrink-0 w-8 h-8 bg-blue-500 text-white rounded-lg flex items-center justify-center font-bold">
-                1
-              </div>
-              <div>
-                <h3 className="font-semibold text-white mb-1">Describe your idea</h3>
-                <p className="text-blue-200/80 text-sm">Use the chat panel on the left to tell the AI what you want to build</p>
-              </div>
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.1 }}
+            className="space-y-4"
+          >
+            <Timeline onJump={handleJump} />
+
+            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl p-4 text-slate-300 text-sm">
+              <div className="font-semibold text-white mb-2">Physics assumptions</div>
+              <ul className="list-disc list-inside space-y-1">
+                <li>Particles start near the core with velocities proportional to an energy spike.</li>
+                <li>Gravity, linear drag, buoyancy and wind advection are applied each frame.</li>
+                <li>Ground collisions damp vertical motion and deposit fallout.</li>
+                <li>Adjustable parameters let you explore sensitivity without breaking conservation intuitions.</li>
+              </ul>
             </div>
 
-            <div className="flex items-start gap-4 mb-6">
-              <div className="flex-shrink-0 w-8 h-8 bg-blue-500 text-white rounded-lg flex items-center justify-center font-bold">
-                2
-              </div>
-              <div>
-                <h3 className="font-semibold text-white mb-1">Watch it build</h3>
-                <p className="text-blue-200/80 text-sm">Your app will appear in this preview as the AI generates the code</p>
-              </div>
-            </div>
-
-            <div className="flex items-start gap-4">
-              <div className="flex-shrink-0 w-8 h-8 bg-blue-500 text-white rounded-lg flex items-center justify-center font-bold">
-                3
-              </div>
-              <div>
-                <h3 className="font-semibold text-white mb-1">Refine and iterate</h3>
-                <p className="text-blue-200/80 text-sm">Continue the conversation to add features and make changes</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Footer */}
-          <div className="text-center">
-            <p className="text-sm text-blue-300/60">
-              No coding required • Just describe what you want
-            </p>
-          </div>
+            <a href="/test" className="inline-block text-blue-300 hover:text-blue-200 underline">Backend & DB status</a>
+          </motion.div>
         </div>
+
+        <footer className="pt-8 text-center text-slate-500 text-xs">
+          Educational visualization based on open-source knowledge about the RBMK-1000 accident timeline.
+        </footer>
       </div>
     </div>
   )
