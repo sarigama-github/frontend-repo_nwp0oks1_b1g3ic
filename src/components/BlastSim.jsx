@@ -126,7 +126,7 @@ function Particles({
 
   const pointsRef = useRef()
   const windVec = useMemo(() => new THREE.Vector3(wind[0], wind[1], wind[2]), [wind])
-  const materialRef = useRef()
+  useRef()
 
   useFrame((state, delta) => {
     if (!pointsRef.current) return
@@ -214,22 +214,25 @@ function Particles({
 }
 
 function Debris({ stage, energy = 10 }) {
-  // Instanced debris for explosive stages
-  const count = stage >= 3 ? 120 : stage === 2 ? 60 : 0
+  // Instanced debris for explosive stages using tetrahedrons to avoid boxy look
+  const count = stage >= 3 ? 140 : stage === 2 ? 80 : 0
   const meshRef = useRef()
   const positions = useMemo(() => new Array(count).fill(0).map(() => new THREE.Vector3()), [count])
   const velocities = useMemo(() => new Array(count).fill(0).map(() => new THREE.Vector3()), [count])
-  const scales = useMemo(() => new Array(count).fill(0).map(() => 0.05 + Math.random() * 0.15), [count])
+  const scales = useMemo(() => new Array(count).fill(0).map(() => 0.05 + Math.random() * 0.18), [count])
+  const spins = useMemo(() => new Array(count).fill(0).map(() => new THREE.Vector3(Math.random()*2-1, Math.random()*2-1, Math.random()*2-1)), [count])
+  const rots = useMemo(() => new Array(count).fill(0).map(() => new THREE.Euler()), [count])
 
   useEffect(() => {
-    const up = stage === 3 ? 1.0 : 0.5
+    const up = stage === 3 ? 1.0 : 0.6
     for (let i = 0; i < count; i++) {
       const dir = new THREE.Vector3((Math.random()-0.5), Math.random()*up, (Math.random()-0.5)).normalize()
-      const v = (energy * (0.6 + Math.random()*0.8)) * (0.5 + Math.random())
+      const v = (energy * (0.7 + Math.random()*0.9)) * (0.5 + Math.random())
       velocities[i].copy(dir.multiplyScalar(v))
       positions[i].set(0, 0.6, 0)
+      rots[i].set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI)
     }
-  }, [stage, count, energy, positions, velocities])
+  }, [stage, count, energy, positions, velocities, rots])
 
   useFrame((_, delta) => {
     if (!meshRef.current) return
@@ -237,15 +240,19 @@ function Debris({ stage, energy = 10 }) {
     for (let i = 0; i < count; i++) {
       velocities[i].y -= g * delta
       positions[i].addScaledVector(velocities[i], delta)
+      rots[i].x += spins[i].x * delta
+      rots[i].y += spins[i].y * delta
+      rots[i].z += spins[i].z * delta
       if (positions[i].y < 0) {
         positions[i].y = 0
-        velocities[i].y *= -0.25
-        velocities[i].x *= 0.6
-        velocities[i].z *= 0.6
+        velocities[i].y *= -0.28
+        velocities[i].x *= 0.65
+        velocities[i].z *= 0.65
+        spins[i].multiplyScalar(0.9)
       }
       const m = new THREE.Matrix4()
-      const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.random()*0.02, Math.random()*0.02, 0))
-      m.compose(positions[i], q, new THREE.Vector3(scales[i], scales[i], scales[i]))
+      const q = new THREE.Quaternion().setFromEuler(rots[i])
+      m.compose(positions[i], q, new THREE.Vector3(scales[i], scales[i]*1.4, scales[i]))
       meshRef.current.setMatrixAt(i, m)
     }
     meshRef.current.instanceMatrix.needsUpdate = true
@@ -255,8 +262,8 @@ function Debris({ stage, energy = 10 }) {
 
   return (
     <instancedMesh ref={meshRef} args={[null, null, count]} castShadow receiveShadow>
-      <boxGeometry args={[1, 1, 1]} />
-      <meshStandardMaterial color="#bfbfbf" metalness={0.1} roughness={0.8} />
+      <tetrahedronGeometry args={[1, 0]} />
+      <meshStandardMaterial color="#d1d5db" metalness={0.05} roughness={0.95} />
     </instancedMesh>
   )
 }
@@ -288,45 +295,74 @@ function Shockwave({ triggerKey }) {
 }
 
 function ReactorCore({ heat = 1 }) {
-  const ref = useRef()
+  // Replace sphere with capped cylinder + glowing ring to avoid sphere primitive look
+  const bodyRef = useRef()
+  const ringRef = useRef()
   useFrame((state) => {
-    if (!ref.current) return
     const t = state.clock.getElapsedTime()
-    ref.current.scale.setScalar(1 + Math.sin(t * 3) * 0.05 * heat)
-    ref.current.material.emissiveIntensity = 1.5 * heat
+    const s = 1 + Math.sin(t * 3) * 0.04 * heat
+    if (bodyRef.current) bodyRef.current.scale.set(1, s, 1)
+    if (ringRef.current) ringRef.current.material.emissiveIntensity = 1.8 * heat * (1.0 + Math.sin(t*5)*0.3)
   })
   return (
-    <mesh ref={ref} position={[0, 0.5, 0]} castShadow>
-      <sphereGeometry args={[0.4, 32, 32]} />
-      <meshStandardMaterial emissive="#ff6b00" emissiveIntensity={2} color="#222" />
-    </mesh>
-  )
-}
-
-function Buildings() {
-  return (
-    <group>
-      {/* Turbine hall */}
-      <mesh position={[2.5, 0.5, 0]} castShadow receiveShadow>
-        <boxGeometry args={[4, 1, 2]} />
-        <meshStandardMaterial color="#374151" />
+    <group position={[0, 0.5, 0]}>
+      <mesh ref={bodyRef} castShadow>
+        <cylinderGeometry args={[0.42, 0.42, 0.5, 24]} />
+        <meshStandardMaterial color="#232323" metalness={0.1} roughness={0.8} emissive="#ff6b00" emissiveIntensity={0.9*heat} />
       </mesh>
-      {/* Reactor building blocky silhouette */}
-      <mesh position={[0, 0.8, -1.8]} castShadow receiveShadow>
-        <boxGeometry args={[2, 1.6, 2]} />
-        <meshStandardMaterial color="#4b5563" />
-      </mesh>
-      {/* Chimney */}
-      <mesh position={[0.9, 2, -1.6]} castShadow>
-        <cylinderGeometry args={[0.2, 0.2, 4, 16]} />
-        <meshStandardMaterial color="#6b7280" />
+      <mesh ref={ringRef} position={[0, 0.26, 0]} rotation={[Math.PI/2,0,0]}>
+        <torusGeometry args={[0.45, 0.04, 16, 48]} />
+        <meshStandardMaterial color="#111827" emissive="#ff8a00" emissiveIntensity={1.2*heat} />
       </mesh>
     </group>
   )
 }
 
-function Scene({ stage = 0, onExplode }) {
-  const preset = STAGE_PRESETS[Math.min(STAGE_PRESETS.length - 1, Math.max(0, stage))]
+function EdgedBlock({ position=[0,0,0], size=[1,1,1], color="#4b5563", sloped=false }) {
+  // Non-boxy silhouette: thin shell + edges overlay
+  const [w,h,d] = size
+  const geo = useMemo(() => new THREE.BoxGeometry(w,h,d), [w,h,d])
+  const edges = useMemo(() => new THREE.EdgesGeometry(geo), [geo])
+  return (
+    <group position={position}>
+      <mesh castShadow receiveShadow rotation={sloped ? [0,0,0.08] : [0,0,0]}>
+        <primitive object={geo} attach="geometry" />
+        <meshStandardMaterial color={color} roughness={0.9} metalness={0.05} />
+      </mesh>
+      <lineSegments>
+        <primitive object={edges} attach="geometry" />
+        <lineBasicMaterial color="#9ca3af" linewidth={1} />
+      </lineSegments>
+    </group>
+  )
+}
+
+function Buildings() {
+  // Stylized silhouettes of the turbine hall, reactor building, and chimney with edge highlights
+  return (
+    <group>
+      {/* Turbine hall */}
+      <EdgedBlock position={[2.5, 0.5, 0]} size={[4, 1, 2]} color="#2f3542" />
+      {/* Reactor building with slightly sloped cap */}
+      <EdgedBlock position={[0, 0.8, -1.8]} size={[2, 1.6, 2]} color="#3b4252" sloped />
+      {/* Chimney */}
+      <group position={[0.9, 2, -1.6]}>
+        <mesh castShadow>
+          <cylinderGeometry args={[0.18, 0.2, 4, 24]} />
+          <meshStandardMaterial color="#606a78" roughness={0.7} metalness={0.1} />
+        </mesh>
+        <lineSegments>
+          <edgesGeometry args={[new THREE.CylinderGeometry(0.18,0.2,4,24)]} />
+          <lineBasicMaterial color="#cbd5e1" />
+        </lineSegments>
+      </group>
+    </group>
+  )
+}
+
+function Scene({ stage = 0, onExplode, forcePresetIndex, fullMode = false }) {
+  const presetIndex = typeof forcePresetIndex === 'number' ? forcePresetIndex : stage
+  const preset = STAGE_PRESETS[Math.min(STAGE_PRESETS.length - 1, Math.max(0, presetIndex))]
 
   // Leva controls act as fine-tuning on top of preset
   const { energyScale, dragOffset } = useControls({
@@ -338,11 +374,11 @@ function Scene({ stage = 0, onExplode }) {
   const effectiveDrag = Math.max(0.0, preset.drag + dragOffset)
 
   // trigger shockwave on explosive stages
-  const shockKey = `${stage}-${effectiveEnergy.toFixed(2)}`
+  const shockKey = `${presetIndex}-${effectiveEnergy.toFixed(2)}`
   useEffect(() => {
-    if (stage >= 2 && onExplode) onExplode()
+    if (presetIndex >= 2 && onExplode) onExplode()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stage])
+  }, [presetIndex])
 
   return (
     <>
@@ -362,23 +398,48 @@ function Scene({ stage = 0, onExplode }) {
       <gridHelper args={[60, 60, '#1e293b', '#0f172a']} position={[0, 0.01, 0]} />
       <axesHelper args={[2]} position={[0, 0.02, 0]} />
 
-      {stage >= 2 && <Shockwave triggerKey={shockKey} />}
+      {presetIndex >= 2 && <Shockwave triggerKey={shockKey} />}
 
-      <Particles
-        stage={stage}
-        count={preset.count}
-        blastEnergy={effectiveEnergy}
-        drag={effectiveDrag}
-        wind={preset.wind}
-        buoyancy={preset.buoyancy}
-        anisotropyUp={preset.anisotropyUp}
-        anisotropyXZ={preset.anisotropyXZ}
-        verticalBias={preset.verticalBias}
-        thermalDecay={preset.thermalDecay}
-        colorsPair={preset.colors}
-      />
-
-      <Debris stage={stage} energy={effectiveEnergy} />
+      {/* Full mode renders multiple concurrent systems for a composite blast */}
+      {fullMode ? (
+        <group>
+          {STAGE_PRESETS.map((p, idx) => (
+            <group key={idx}>
+              <Particles
+                stage={idx}
+                count={Math.floor(p.count * (idx>=3 ? 0.6 : 0.4))}
+                blastEnergy={p.blastEnergy}
+                drag={p.drag}
+                wind={p.wind}
+                buoyancy={p.buoyancy}
+                anisotropyUp={p.anisotropyUp}
+                anisotropyXZ={p.anisotropyXZ}
+                verticalBias={p.verticalBias}
+                thermalDecay={p.thermalDecay}
+                colorsPair={p.colors}
+              />
+              <Debris stage={idx} energy={p.blastEnergy} />
+            </group>
+          ))}
+        </group>
+      ) : (
+        <group>
+          <Particles
+            stage={presetIndex}
+            count={preset.count}
+            blastEnergy={effectiveEnergy}
+            drag={effectiveDrag}
+            wind={preset.wind}
+            buoyancy={preset.buoyancy}
+            anisotropyUp={preset.anisotropyUp}
+            anisotropyXZ={preset.anisotropyXZ}
+            verticalBias={preset.verticalBias}
+            thermalDecay={preset.thermalDecay}
+            colorsPair={preset.colors}
+          />
+          <Debris stage={presetIndex} energy={effectiveEnergy} />
+        </group>
+      )}
 
       <OrbitControls enablePan enableZoom enableDamping dampingFactor={0.08} target={[0, 0.8, 0]} />
       <PerspectiveCamera makeDefault position={[6, 4, 8]} fov={50} />
@@ -424,27 +485,74 @@ class ErrorBoundary extends Component {
 export default function BlastSim({ stage = 0 }) {
   const [webglOk, setWebglOk] = useState(true)
   const [explodeTick, setExplodeTick] = useState(0)
+  const [autoPlay, setAutoPlay] = useState(false)
+  const [fullMode, setFullMode] = useState(false)
+  const [localStage, setLocalStage] = useState(stage)
+
   useEffect(() => {
     setWebglOk(supportsWebGL())
   }, [])
 
-  const preset = STAGE_PRESETS[Math.min(STAGE_PRESETS.length - 1, Math.max(0, stage))]
+  // keep local in sync when not autoplaying
+  useEffect(() => {
+    if (!autoPlay) setLocalStage(stage)
+  }, [stage, autoPlay])
+
+  // autoplay sequence across all stages
+  useEffect(() => {
+    if (!autoPlay) return
+    setLocalStage(0)
+    let idx = 0
+    const steps = [1200, 1200, 800, 1200, 1200, 2000] // ms per stage
+    const timer = setInterval(() => {
+      idx += 1
+      if (idx >= STAGE_PRESETS.length) {
+        clearInterval(timer)
+        setAutoPlay(false)
+        return
+      }
+      setLocalStage(idx)
+    }, steps[Math.min(idx, steps.length-1)])
+    return () => clearInterval(timer)
+  }, [autoPlay])
+
+  const displayStage = autoPlay ? localStage : stage
+  const preset = STAGE_PRESETS[Math.min(STAGE_PRESETS.length - 1, Math.max(0, fullMode ? 5 : displayStage))]
 
   return (
     <div className="relative w-full h-[560px] rounded-2xl overflow-hidden border border-slate-700 bg-slate-900">
       <Leva collapsed />
+
+      {/* Top-left HUD */}
       <div className="pointer-events-none absolute top-3 left-3 z-10 bg-slate-900/60 backdrop-blur-sm border border-slate-700 text-white text-xs px-2 py-1 rounded">
-        {preset.title}
+        {fullMode ? 'Composite: full sequence' : preset.title}
       </div>
+
+      {/* Controls */}
+      <div className="absolute top-3 right-3 z-10 flex gap-2">
+        <button
+          onClick={() => { setFullMode(false); setAutoPlay(true) }}
+          className="px-3 py-1 rounded bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-semibold shadow"
+        >
+          Play sequence
+        </button>
+        <button
+          onClick={() => { setAutoPlay(false); setFullMode((v)=>!v) }}
+          className="px-3 py-1 rounded bg-sky-400 hover:bg-sky-300 text-black text-xs font-semibold shadow"
+        >
+          {fullMode ? 'Exit composite' : 'Play full blast'}
+        </button>
+      </div>
+
       {!webglOk ? (
-        <div className="absolute inset-0 flex items-center justify-center text-slate-200">
+        <div className="absolute inset-0 flex items-center justify-center text-slate-2 00">
           WebGL not supported on this device/browser.
         </div>
       ) : (
         <ErrorBoundary>
           <Suspense fallback={<div className="absolute inset-0 flex items-center justify-center text-slate-200">Loading 3D…</div>}>
             <Canvas shadows dpr={[1, 2]}>
-              <Scene stage={stage} onExplode={() => setExplodeTick((t)=>t+1)} />
+              <Scene stage={displayStage} fullMode={fullMode} onExplode={() => setExplodeTick((t)=>t+1)} />
             </Canvas>
           </Suspense>
         </ErrorBoundary>
