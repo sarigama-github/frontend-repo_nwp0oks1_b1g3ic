@@ -1,8 +1,8 @@
 import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls, PerspectiveCamera, Stars } from '@react-three/drei'
-import { Physics, usePlane, useSphere } from '@react-three/cannon'
+import { Physics, usePlane } from '@react-three/cannon'
 import * as THREE from 'three'
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, Suspense, useState } from 'react'
 import { Leva, useControls } from 'leva'
 
 function Ground(props) {
@@ -19,7 +19,6 @@ function Particles({ count = 2000, blastEnergy = 5, drag = 0.02 }) {
   const positions = useMemo(() => new Float32Array(count * 3), [count])
   const velocities = useMemo(() => new Float32Array(count * 3), [count])
   const colors = useMemo(() => new Float32Array(count * 3), [count])
-  const colors2 = useMemo(() => new Float32Array(count * 3), [count])
 
   // Initialize particle positions in a small sphere near origin (core)
   useMemo(() => {
@@ -44,17 +43,13 @@ function Particles({ count = 2000, blastEnergy = 5, drag = 0.02 }) {
       colors[i3] = c.r
       colors[i3 + 1] = c.g
       colors[i3 + 2] = c.b
-
-      const ash = new THREE.Color('#9ca3af')
-      colors2[i3] = ash.r
-      colors2[i3 + 1] = ash.g
-      colors2[i3 + 2] = ash.b
     }
-  }, [count, positions, velocities, colors, colors2, blastEnergy])
+  }, [count, positions, velocities, colors, blastEnergy])
 
   const pointsRef = useRef()
 
   useFrame((state, delta) => {
+    if (!pointsRef.current) return
     const g = 9.81
     const wind = new THREE.Vector3(0.6, 0, 0.1) // gentle prevailing wind
     for (let i = 0; i < count; i++) {
@@ -62,9 +57,10 @@ function Particles({ count = 2000, blastEnergy = 5, drag = 0.02 }) {
       // Apply gravity
       velocities[i3 + 1] -= g * delta * 0.2
       // Apply drag (quadratic approx)
-      velocities[i3] *= 1 - drag
-      velocities[i3 + 1] *= 1 - drag
-      velocities[i3 + 2] *= 1 - drag
+      const dragFactor = 1 - drag
+      velocities[i3] *= dragFactor
+      velocities[i3 + 1] *= dragFactor
+      velocities[i3 + 2] *= dragFactor
       // Buoyant rise for hot particles that are above core height
       if (positions[i3 + 1] > 0.5) {
         velocities[i3 + 1] += 1.5 * delta
@@ -103,6 +99,7 @@ function Particles({ count = 2000, blastEnergy = 5, drag = 0.02 }) {
 function ReactorCore({ heat = 1 }) {
   const ref = useRef()
   useFrame((state) => {
+    if (!ref.current) return
     const t = state.clock.getElapsedTime()
     ref.current.scale.setScalar(1 + Math.sin(t * 3) * 0.05 * heat)
   })
@@ -118,17 +115,17 @@ function Buildings() {
   return (
     <group>
       {/* Turbine hall */}
-      <mesh position={[2.5, 0.5, 0]}>
+      <mesh position={[2.5, 0.5, 0]} castShadow receiveShadow>
         <boxGeometry args={[4, 1, 2]} />
         <meshStandardMaterial color="#374151" />
       </mesh>
       {/* Reactor building blocky silhouette */}
-      <mesh position={[0, 0.8, -1.8]}>
+      <mesh position={[0, 0.8, -1.8]} castShadow receiveShadow>
         <boxGeometry args={[2, 1.6, 2]} />
         <meshStandardMaterial color="#4b5563" />
       </mesh>
       {/* Chimney */}
-      <mesh position={[0.9, 2, -1.6]}>
+      <mesh position={[0.9, 2, -1.6]} castShadow>
         <cylinderGeometry args={[0.2, 0.2, 4, 16]} />
         <meshStandardMaterial color="#6b7280" />
       </mesh>
@@ -145,9 +142,9 @@ function Scene() {
   return (
     <>
       <color attach="background" args={["#0b1220"]} />
-      <fog attach="fog" args={["#0b1220", 10, 60]} />
-      <ambientLight intensity={0.2} />
-      <directionalLight position={[5, 8, 5]} intensity={1.2} castShadow />
+      <fog attach="fog" args={["#0b1220", 20, 120]} />
+      <ambientLight intensity={0.3} />
+      <directionalLight position={[5, 8, 5]} intensity={1.4} castShadow />
       <Stars radius={50} depth={20} count={2000} factor={4} fade />
 
       <Physics gravity={[0, -9.81, 0]}>
@@ -157,21 +154,74 @@ function Scene() {
       <ReactorCore />
       <Buildings />
 
+      <gridHelper args={[60, 60, '#1e293b', '#0f172a']} position={[0, 0.01, 0]} />
+      <axesHelper args={[2]} position={[0, 0.02, 0]} />
+
       <Particles count={3000} blastEnergy={blastEnergy} drag={drag} />
 
-      <OrbitControls enablePan={true} enableZoom={true} maxDistance={40} />
+      <OrbitControls enablePan enableZoom enableDamping dampingFactor={0.08} target={[0, 0.8, 0]} />
       <PerspectiveCamera makeDefault position={[6, 4, 8]} fov={50} />
     </>
   )
 }
 
+function supportsWebGL() {
+  try {
+    const canvas = document.createElement('canvas')
+    return !!(
+      window.WebGLRenderingContext &&
+      (canvas.getContext('webgl') || canvas.getContext('experimental-webgl'))
+    )
+  } catch (e) {
+    return false
+  }
+}
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error }
+  }
+  componentDidCatch(error, info) {
+    // no-op, could log
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="absolute inset-0 flex items-center justify-center text-red-200 bg-slate-900/80 p-4 text-sm">
+          3D renderer failed: {String(this.state.error)}
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 export default function BlastSim() {
+  const [webglOk, setWebglOk] = useState(true)
+  useEffect(() => {
+    setWebglOk(supportsWebGL())
+  }, [])
+
   return (
-    <div className="relative w-full h-[480px] rounded-2xl overflow-hidden border border-slate-700">
+    <div className="relative w-full h-[520px] rounded-2xl overflow-hidden border border-slate-700 bg-slate-900">
       <Leva collapsed />
-      <Canvas shadows dpr={[1, 2]}>
-        <Scene />
-      </Canvas>
+      {!webglOk ? (
+        <div className="absolute inset-0 flex items-center justify-center text-slate-200">
+          WebGL not supported on this device/browser.
+        </div>
+      ) : (
+        <ErrorBoundary>
+          <Suspense fallback={<div className="absolute inset-0 flex items-center justify-center text-slate-200">Loading 3D…</div>}>
+            <Canvas shadows dpr={[1, 2]}>
+              <Scene />
+            </Canvas>
+          </Suspense>
+        </ErrorBoundary>
+      )}
     </div>
   )
 }
