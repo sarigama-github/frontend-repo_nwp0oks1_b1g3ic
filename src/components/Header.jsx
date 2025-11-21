@@ -1,4 +1,4 @@
-import { Flame, Timeline } from 'lucide-react'
+import { Flame, Calendar } from 'lucide-react'
 
 export default function Header() {
   return (
@@ -13,7 +13,7 @@ export default function Header() {
         </div>
       </div>
       <div className="hidden sm:flex items-center gap-2 text-slate-400 text-sm">
-        <Timeline size={16} />
+        <Calendar size={16} />
         26 April 1986
       </div>
     </div>
