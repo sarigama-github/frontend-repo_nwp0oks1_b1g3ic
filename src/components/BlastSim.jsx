@@ -1,8 +1,8 @@
+import React, { Component, useEffect, useMemo, useRef, Suspense, useState } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls, PerspectiveCamera, Stars } from '@react-three/drei'
 import { Physics, usePlane } from '@react-three/cannon'
 import * as THREE from 'three'
-import { useEffect, useMemo, useRef, Suspense, useState } from 'react'
 import { Leva, useControls } from 'leva'
 
 function Ground(props) {
@@ -177,7 +177,7 @@ function supportsWebGL() {
   }
 }
 
-class ErrorBoundary extends React.Component {
+class ErrorBoundary extends Component {
   constructor(props) {
     super(props)
     this.state = { hasError: false, error: null }
