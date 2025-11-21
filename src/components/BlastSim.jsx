@@ -15,27 +15,64 @@ function Ground(props) {
   )
 }
 
-function Particles({ count = 2000, blastEnergy = 5, drag = 0.02 }) {
+// Stage presets approximating the reported sequence
+const STAGE_PRESETS = [
+  // 0 - Test initiation: low energy, stable
+  { blastEnergy: 2, drag: 0.035, buoyancy: 0.6, anisotropyUp: 0.2, anisotropyXZ: 0.0, wind: [0.4, 0.0, 0.05], thermalDecay: 0.2, verticalBias: 0.2, count: 1200, heat: 0.4, colors: ['#94a3b8', '#cbd5e1'] },
+  // 1 - SCRAM initiated: reactivity spike forming
+  { blastEnergy: 4, drag: 0.03, buoyancy: 0.9, anisotropyUp: 0.4, anisotropyXZ: 0.1, wind: [0.5, 0.0, 0.08], thermalDecay: 0.25, verticalBias: 0.35, count: 1600, heat: 0.7, colors: ['#f59e0b', '#f97316'] },
+  // 2 - Power surge: prompt critical tendencies
+  { blastEnergy: 10, drag: 0.028, buoyancy: 1.2, anisotropyUp: 0.7, anisotropyXZ: 0.2, wind: [0.6, 0.0, 0.1], thermalDecay: 0.35, verticalBias: 0.55, count: 2200, heat: 1.0, colors: ['#fbbf24', '#fb7185'] },
+  // 3 - Steam explosion: violent upward ejection, lid displacement
+  { blastEnergy: 16, drag: 0.03, buoyancy: 1.6, anisotropyUp: 1.0, anisotropyXZ: 0.15, wind: [0.7, 0.0, 0.12], thermalDecay: 0.45, verticalBias: 0.85, count: 3200, heat: 1.3, colors: ['#ffd166', '#ff6b00'] },
+  // 4 - Chemical explosion: lateral blast, debris outward
+  { blastEnergy: 14, drag: 0.032, buoyancy: 1.0, anisotropyUp: 0.4, anisotropyXZ: 0.9, wind: [0.8, 0.0, 0.15], thermalDecay: 0.4, verticalBias: 0.35, count: 3000, heat: 1.1, colors: ['#9ca3af', '#e5e7eb'] },
+  // 5 - Aftermath: graphite fire, lofted fallout plume
+  { blastEnergy: 6, drag: 0.04, buoyancy: 1.4, anisotropyUp: 0.8, anisotropyXZ: 0.2, wind: [1.0, 0.0, 0.2], thermalDecay: 0.15, verticalBias: 0.65, count: 2600, heat: 0.9, colors: ['#8b5cf6', '#94a3b8'] },
+]
+
+function Particles({
+  stage,
+  count = 2000,
+  blastEnergy = 5,
+  drag = 0.02,
+  wind = [0.6, 0, 0.1],
+  buoyancy = 1.0,
+  anisotropyUp = 0.5,
+  anisotropyXZ = 0.0,
+  verticalBias = 0.5,
+  thermalDecay = 0.3,
+  colorsPair = ['#ffb703', '#fb7185'],
+}) {
   const positions = useMemo(() => new Float32Array(count * 3), [count])
   const velocities = useMemo(() => new Float32Array(count * 3), [count])
+  const temperatures = useMemo(() => new Float32Array(count), [count])
   const colors = useMemo(() => new Float32Array(count * 3), [count])
 
-  // Initialize particle positions in a small sphere near origin (core)
+  // Initialize particle positions/velocities with anisotropy and stage-driven parameters
   useMemo(() => {
-    const color1 = new THREE.Color('#ffb703')
-    const color2 = new THREE.Color('#fb7185')
+    const color1 = new THREE.Color(colorsPair[0])
+    const color2 = new THREE.Color(colorsPair[1])
+    const tmp = new THREE.Vector3()
     for (let i = 0; i < count; i++) {
       const i3 = i * 3
-      const dir = new THREE.Vector3().randomDirection()
-      const r = Math.random() * 0.2
+      // Spawn near the core
+      const r = Math.random() * 0.25
+      tmp.randomDirection()
+      // Directional bias: upward and/or lateral (XZ) based on stage
+      const upBias = new THREE.Vector3(0, 1, 0).multiplyScalar(anisotropyUp)
+      const xzDir = new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize().multiplyScalar(anisotropyXZ)
+      const dir = tmp.add(upBias).add(xzDir).normalize()
+
       positions[i3] = dir.x * r
-      positions[i3 + 1] = 0.5 + dir.y * r
+      positions[i3 + 1] = 0.5 + Math.abs(dir.y) * r
       positions[i3 + 2] = dir.z * r
 
-      // Velocity proportional to blast energy and inverse of local density approximation
-      const v = (blastEnergy * (0.6 + Math.random() * 0.6)) / (1 + r)
+      // Initial speed: energy scaled, bias vertical
+      const base = (0.6 + Math.random() * 0.6)
+      const v = (blastEnergy * base) / (1 + r)
       velocities[i3] = dir.x * v
-      velocities[i3 + 1] = Math.abs(dir.y) * v // upward bias from buoyancy/steam
+      velocities[i3 + 1] = (verticalBias * Math.abs(dir.y) + (1 - verticalBias) * dir.y) * v
       velocities[i3 + 2] = dir.z * v
 
       const t = Math.random()
@@ -43,43 +80,52 @@ function Particles({ count = 2000, blastEnergy = 5, drag = 0.02 }) {
       colors[i3] = c.r
       colors[i3 + 1] = c.g
       colors[i3 + 2] = c.b
+      // Initial temperature proxy used for buoyancy that decays
+      temperatures[i] = 1.0
     }
-  }, [count, positions, velocities, colors, blastEnergy])
+  // reinitialize whenever stage or key params change
+  }, [count, blastEnergy, anisotropyUp, anisotropyXZ, verticalBias, colorsPair, stage, positions, velocities, colors, temperatures])
 
   const pointsRef = useRef()
+  const windVec = useMemo(() => new THREE.Vector3(wind[0], wind[1], wind[2]), [wind])
 
   useFrame((state, delta) => {
     if (!pointsRef.current) return
     const g = 9.81
-    const wind = new THREE.Vector3(0.6, 0, 0.1) // gentle prevailing wind
+    const dragFactor = Math.max(0, 1 - drag)
+
     for (let i = 0; i < count; i++) {
       const i3 = i * 3
-      // Apply gravity
-      velocities[i3 + 1] -= g * delta * 0.2
-      // Apply drag (quadratic approx)
-      const dragFactor = 1 - drag
+      // Gravity
+      velocities[i3 + 1] -= g * delta * 0.25
+
+      // Drag (approx)
       velocities[i3] *= dragFactor
       velocities[i3 + 1] *= dragFactor
       velocities[i3 + 2] *= dragFactor
-      // Buoyant rise for hot particles that are above core height
-      if (positions[i3 + 1] > 0.5) {
-        velocities[i3 + 1] += 1.5 * delta
+
+      // Thermal buoyancy scaled by decaying temperature
+      if (positions[i3 + 1] > 0.2) {
+        velocities[i3 + 1] += buoyancy * temperatures[i] * delta
+        temperatures[i] = Math.max(0, temperatures[i] - thermalDecay * delta)
       }
+
       // Wind advection
-      velocities[i3] += wind.x * delta * 0.2
-      velocities[i3 + 2] += wind.z * delta * 0.2
+      velocities[i3] += windVec.x * delta * 0.25
+      velocities[i3 + 2] += windVec.z * delta * 0.25
 
       // Integrate
       positions[i3] += velocities[i3] * delta
       positions[i3 + 1] += velocities[i3 + 1] * delta
       positions[i3 + 2] += velocities[i3 + 2] * delta
 
-      // Simple ground collision
+      // Ground interaction: damp and deposit
       if (positions[i3 + 1] < 0) {
         positions[i3 + 1] = 0
-        velocities[i3 + 1] *= -0.2
-        velocities[i3] *= 0.6
-        velocities[i3 + 2] *= 0.6
+        velocities[i3 + 1] *= -0.15
+        velocities[i3] *= 0.55
+        velocities[i3 + 2] *= 0.55
+        temperatures[i] *= 0.7
       }
     }
     pointsRef.current.geometry.attributes.position.needsUpdate = true
@@ -91,7 +137,7 @@ function Particles({ count = 2000, blastEnergy = 5, drag = 0.02 }) {
         <bufferAttribute attach="attributes-position" count={count} array={positions} itemSize={3} />
         <bufferAttribute attach="attributes-color" count={count} array={colors} itemSize={3} />
       </bufferGeometry>
-      <pointsMaterial size={0.05} vertexColors blending={THREE.AdditiveBlending} depthWrite={false} />
+      <pointsMaterial size={0.05} vertexColors blending={THREE.AdditiveBlending} depthWrite={false} sizeAttenuation />
     </points>
   )
 }
@@ -102,6 +148,7 @@ function ReactorCore({ heat = 1 }) {
     if (!ref.current) return
     const t = state.clock.getElapsedTime()
     ref.current.scale.setScalar(1 + Math.sin(t * 3) * 0.05 * heat)
+    ref.current.material.emissiveIntensity = 1.5 * heat
   })
   return (
     <mesh ref={ref} position={[0, 0.5, 0]} castShadow>
@@ -133,11 +180,17 @@ function Buildings() {
   )
 }
 
-function Scene() {
-  const { blastEnergy, drag } = useControls({
-    blastEnergy: { value: 8, min: 1, max: 20, step: 0.1 },
-    drag: { value: 0.03, min: 0.0, max: 0.2, step: 0.005 },
+function Scene({ stage = 0 }) {
+  const preset = STAGE_PRESETS[Math.min(STAGE_PRESETS.length - 1, Math.max(0, stage))]
+
+  // Leva controls act as fine-tuning on top of preset
+  const { energyScale, dragOffset } = useControls({
+    energyScale: { value: 1.0, min: 0.25, max: 2.0, step: 0.05 },
+    dragOffset: { value: 0.0, min: -0.02, max: 0.05, step: 0.002 },
   })
+
+  const effectiveEnergy = preset.blastEnergy * energyScale
+  const effectiveDrag = Math.max(0.0, preset.drag + dragOffset)
 
   return (
     <>
@@ -151,13 +204,25 @@ function Scene() {
         <Ground />
       </Physics>
 
-      <ReactorCore />
+      <ReactorCore heat={preset.heat} />
       <Buildings />
 
       <gridHelper args={[60, 60, '#1e293b', '#0f172a']} position={[0, 0.01, 0]} />
       <axesHelper args={[2]} position={[0, 0.02, 0]} />
 
-      <Particles count={3000} blastEnergy={blastEnergy} drag={drag} />
+      <Particles
+        stage={stage}
+        count={preset.count}
+        blastEnergy={effectiveEnergy}
+        drag={effectiveDrag}
+        wind={preset.wind}
+        buoyancy={preset.buoyancy}
+        anisotropyUp={preset.anisotropyUp}
+        anisotropyXZ={preset.anisotropyXZ}
+        verticalBias={preset.verticalBias}
+        thermalDecay={preset.thermalDecay}
+        colorsPair={preset.colors}
+      />
 
       <OrbitControls enablePan enableZoom enableDamping dampingFactor={0.08} target={[0, 0.8, 0]} />
       <PerspectiveCamera makeDefault position={[6, 4, 8]} fov={50} />
@@ -200,7 +265,7 @@ class ErrorBoundary extends Component {
   }
 }
 
-export default function BlastSim() {
+export default function BlastSim({ stage = 0 }) {
   const [webglOk, setWebglOk] = useState(true)
   useEffect(() => {
     setWebglOk(supportsWebGL())
@@ -217,7 +282,7 @@ export default function BlastSim() {
         <ErrorBoundary>
           <Suspense fallback={<div className="absolute inset-0 flex items-center justify-center text-slate-200">Loading 3D…</div>}>
             <Canvas shadows dpr={[1, 2]}>
-              <Scene />
+              <Scene stage={stage} />
             </Canvas>
           </Suspense>
         </ErrorBoundary>

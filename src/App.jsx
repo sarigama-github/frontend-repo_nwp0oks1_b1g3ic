@@ -2,11 +2,13 @@ import Header from './components/Header'
 import Timeline from './components/Timeline'
 import BlastSim from './components/BlastSim'
 import { motion } from 'framer-motion'
+import React from 'react'
 
 function App() {
+  const [stage, setStage] = React.useState(0)
+
   const handleJump = (idx) => {
-    // For future: adjust sim parameters by timeline step
-    // Example: initial low energy, then spike, then fallout
+    setStage(idx)
   }
 
   return (
@@ -28,7 +30,7 @@ function App() {
               initial energy and drag to explore plausible envelopes. Note: this is an educational visualization, not a
               forensic CFD reconstruction.
             </p>
-            <BlastSim />
+            <BlastSim stage={stage} />
           </motion.div>
 
           <motion.div
@@ -43,9 +45,9 @@ function App() {
               <div className="font-semibold text-white mb-2">Physics assumptions</div>
               <ul className="list-disc list-inside space-y-1">
                 <li>Particles start near the core with velocities proportional to an energy spike.</li>
-                <li>Gravity, linear drag, buoyancy and wind advection are applied each frame.</li>
+                <li>Gravity, drag (size-dependent), buoyancy with thermal decay, and wind advection are applied each frame.</li>
                 <li>Ground collisions damp vertical motion and deposit fallout.</li>
-                <li>Adjustable parameters let you explore sensitivity without breaking conservation intuitions.</li>
+                <li>Timeline stages adjust initial impulse, anisotropy, and thermal energy to match reports.</li>
               </ul>
             </div>
 
