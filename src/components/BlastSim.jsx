@@ -28,14 +28,15 @@ const STAGE_PRESETS = [
 // Fancy particle shader for soft, fading sprites
 const ParticleShader = {
   vertex: /* glsl */`
+    precision highp float;
     attribute float aLife; // 0..1 remaining life
     attribute float aSize; // base size
+    attribute vec3 aColor; // per-particle color
     varying float vLife;
     varying vec3 vColor;
-    attribute vec3 color; // from bufferAttribute
     void main(){
       vLife = aLife;
-      vColor = color;
+      vColor = aColor;
       vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
       float size = aSize * (0.75 + 0.25 * vLife);
       gl_PointSize = size * (300.0 / -mvPosition.z);
@@ -207,7 +208,7 @@ function Particles({
   const geometry = useMemo(() => {
     const g = new THREE.BufferGeometry()
     g.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-    g.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    g.setAttribute('aColor', new THREE.BufferAttribute(colors, 3))
     g.setAttribute('aLife', new THREE.BufferAttribute(life, 1))
     g.setAttribute('aSize', new THREE.BufferAttribute(size, 1))
     return g
@@ -219,12 +220,21 @@ function Particles({
     transparent: true,
     depthWrite: false,
     blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
-    vertexColors: true,
+    vertexColors: false,
     uniforms: { uAlphaMul: { value: alphaMul } },
-  }), [additive, alphaMul])
+  }), [additive, alphaMul]),
+    
+    materialRef = useRef(null)
+
+  useEffect(() => {
+    if (!materialRef.current) return
+    materialRef.current.uniforms.uAlphaMul.value = alphaMul
+  }, [alphaMul])
 
   return (
-    <points ref={pointsRef} position={[0, 0, 0]} geometry={geometry} material={material} />
+    <points ref={pointsRef} position={[0, 0, 0]} geometry={geometry}>
+      <primitive object={material} attach="material" ref={materialRef} />
+    </points>
   )
 }
 
@@ -426,7 +436,6 @@ function CameraShake({ triggerKey }) {
   useFrame((state) => {
     const t = (performance.now() - t0) / 1000
     const decay = Math.exp(-4*t)
-    const n = (hash => (Math.sin(hash*12.9898)*43758.5453)%1)
     const jx = (Math.sin(state.clock.elapsedTime*40.0)*0.5 + Math.sin(state.clock.elapsedTime*23.0))*0.5
     const jy = (Math.cos(state.clock.elapsedTime*36.0)*0.5 + Math.sin(state.clock.elapsedTime*19.0))*0.5
     group.current.position.x = jx * 0.1 * decay
