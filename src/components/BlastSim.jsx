@@ -1,5 +1,5 @@
 import React, { Component, useEffect, useMemo, useRef, Suspense, useState } from 'react'
-import { Canvas, useFrame } from '@react-three/fiber'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls, PerspectiveCamera, Stars } from '@react-three/drei'
 import { Physics, usePlane } from '@react-three/cannon'
 import * as THREE from 'three'
@@ -17,17 +17,11 @@ function Ground(props) {
 
 // Stage presets approximating the reported sequence
 const STAGE_PRESETS = [
-  // 0 - Test initiation: low energy, stable
   { title: 'Test initiation', blastEnergy: 2, drag: 0.035, buoyancy: 0.6, anisotropyUp: 0.2, anisotropyXZ: 0.0, wind: [0.4, 0.0, 0.05], thermalDecay: 0.2, verticalBias: 0.2, count: 1400, heat: 0.4, colors: ['#94a3b8', '#cbd5e1'] },
-  // 1 - SCRAM initiated: reactivity spike forming
   { title: 'SCRAM initiated', blastEnergy: 4, drag: 0.03, buoyancy: 0.9, anisotropyUp: 0.4, anisotropyXZ: 0.1, wind: [0.5, 0.0, 0.08], thermalDecay: 0.25, verticalBias: 0.35, count: 1700, heat: 0.7, colors: ['#f59e0b', '#f97316'] },
-  // 2 - Power surge: prompt critical tendencies
   { title: 'Power surge', blastEnergy: 10, drag: 0.028, buoyancy: 1.2, anisotropyUp: 0.7, anisotropyXZ: 0.2, wind: [0.6, 0.0, 0.1], thermalDecay: 0.35, verticalBias: 0.55, count: 2400, heat: 1.0, colors: ['#fbbf24', '#fb7185'] },
-  // 3 - Steam explosion: violent upward ejection, lid displacement
   { title: 'Steam explosion', blastEnergy: 18, drag: 0.03, buoyancy: 1.6, anisotropyUp: 1.0, anisotropyXZ: 0.15, wind: [0.7, 0.0, 0.12], thermalDecay: 0.45, verticalBias: 0.9, count: 3400, heat: 1.3, colors: ['#ffd166', '#ff6b00'] },
-  // 4 - Chemical explosion: lateral blast, debris outward
   { title: 'Chemical explosion', blastEnergy: 16, drag: 0.032, buoyancy: 1.0, anisotropyUp: 0.4, anisotropyXZ: 1.0, wind: [0.8, 0.0, 0.15], thermalDecay: 0.4, verticalBias: 0.35, count: 3200, heat: 1.1, colors: ['#9ca3af', '#e5e7eb'] },
-  // 5 - Aftermath: graphite fire, lofted fallout plume
   { title: 'Graphite fire and fallout', blastEnergy: 7, drag: 0.04, buoyancy: 1.4, anisotropyUp: 0.85, anisotropyXZ: 0.25, wind: [1.0, 0.0, 0.2], thermalDecay: 0.15, verticalBias: 0.65, count: 2800, heat: 0.9, colors: ['#8b5cf6', '#94a3b8'] },
 ]
 
@@ -57,11 +51,21 @@ const ParticleShader = {
       float d = dot(uv, uv);
       if(d>1.0) discard; // round
       float alpha = smoothstep(1.0, 0.0, d) * smoothstep(0.0, 1.0, vLife);
-      // Warm core, cooler rim
-      vec3 col = mix(vec3(0.1,0.12,0.18), vColor, 0.7);
+      vec3 col = mix(vec3(0.08,0.09,0.12), vColor, 0.75);
       gl_FragColor = vec4(col, alpha);
     }
   `
+}
+
+// Low-frequency curl-like noise helper
+function curlNoise3(x, y, z) {
+  // Simple pseudo curl from trig, inexpensive
+  const s = Math.sin, c = Math.cos
+  return new THREE.Vector3(
+    s(y*0.9) - s(z*1.1),
+    s(z*0.9) - s(x*1.1),
+    s(x*0.9) - s(y*1.1)
+  )
 }
 
 function Particles({
@@ -76,6 +80,10 @@ function Particles({
   verticalBias = 0.5,
   thermalDecay = 0.3,
   colorsPair = ['#ffb703', '#fb7185'],
+  additive = true,
+  sizeRange = [18, 28],
+  noise = 0.0,
+  alphaMul = 1.0,
 }) {
   const positions = useMemo(() => new Float32Array(count * 3), [count])
   const velocities = useMemo(() => new Float32Array(count * 3), [count])
@@ -114,19 +122,17 @@ function Particles({
 
       temperatures[i] = 1.0
       life[i] = 1.0
-      size[i] = 20 + Math.random() * 25 // shader size base
+      size[i] = sizeRange[0] + Math.random() * (sizeRange[1] - sizeRange[0])
     }
   }
 
-  // Initialize particle positions/velocities with anisotropy and stage-driven parameters
   useMemo(() => {
     reinit()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [count, blastEnergy, anisotropyUp, anisotropyXZ, verticalBias, colorsPair, stage])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [count, blastEnergy, anisotropyUp, anisotropyXZ, verticalBias, colorsPair, stage, sizeRange])
 
   const pointsRef = useRef()
   const windVec = useMemo(() => new THREE.Vector3(wind[0], wind[1], wind[2]), [wind])
-  useRef()
 
   useFrame((state, delta) => {
     if (!pointsRef.current) return
@@ -153,6 +159,14 @@ function Particles({
       velocities[i3] += windVec.x * delta * 0.25
       velocities[i3 + 2] += windVec.z * delta * 0.25
 
+      // Coarse curl noise for turbulent meander
+      if (noise > 0.0) {
+        const p = curlNoise3(positions[i3]*0.7, positions[i3+1]*0.7 + state.clock.elapsedTime*0.3, positions[i3+2]*0.7)
+        velocities[i3] += p.x * noise * delta
+        velocities[i3+1] += p.y * noise * delta
+        velocities[i3+2] += p.z * noise * delta
+      }
+
       // Integrate
       positions[i3] += velocities[i3] * delta
       positions[i3 + 1] += velocities[i3 + 1] * delta
@@ -170,7 +184,7 @@ function Particles({
         temperatures[i] *= 0.7
       }
 
-      // Respawn when dead to maintain density in aftermath stages
+      // Respawn when dead
       if (life[i] <= 0.0) {
         const r = Math.random() * 0.2
         const dir = new THREE.Vector3((Math.random() - 0.5), Math.random(), (Math.random() - 0.5)).normalize()
@@ -201,12 +215,13 @@ function Particles({
 
   const material = useMemo(() => new THREE.ShaderMaterial({
     vertexShader: ParticleShader.vertex,
-    fragmentShader: ParticleShader.fragment,
+    fragmentShader: `precision highp float; varying float vLife; varying vec3 vColor; uniform float uAlphaMul; void main(){ vec2 uv = gl_PointCoord*2.0-1.0; float d = dot(uv,uv); if(d>1.0) discard; float alpha = smoothstep(1.0,0.0,d) * smoothstep(0.0,1.0,vLife) * uAlphaMul; vec3 col = mix(vec3(0.08,0.09,0.12), vColor, 0.75); gl_FragColor = vec4(col, alpha); }`,
     transparent: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
+    blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
     vertexColors: true,
-  }), [])
+    uniforms: { uAlphaMul: { value: alphaMul } },
+  }), [additive, alphaMul])
 
   return (
     <points ref={pointsRef} position={[0, 0, 0]} geometry={geometry} material={material} />
@@ -214,8 +229,7 @@ function Particles({
 }
 
 function Debris({ stage, energy = 10 }) {
-  // Instanced debris for explosive stages using tetrahedrons to avoid boxy look
-  const count = stage >= 3 ? 140 : stage === 2 ? 80 : 0
+  const count = stage >= 3 ? 160 : stage === 2 ? 90 : 0
   const meshRef = useRef()
   const positions = useMemo(() => new Array(count).fill(0).map(() => new THREE.Vector3()), [count])
   const velocities = useMemo(() => new Array(count).fill(0).map(() => new THREE.Vector3()), [count])
@@ -273,9 +287,7 @@ function Shockwave({ triggerKey }) {
   const materialRef = useRef()
   const [t0, setT0] = useState(0)
 
-  useEffect(() => {
-    setT0(performance.now())
-  }, [triggerKey])
+  useEffect(() => { setT0(performance.now()) }, [triggerKey])
 
   useFrame(() => {
     if (!ringRef.current || !materialRef.current) return
@@ -295,7 +307,6 @@ function Shockwave({ triggerKey }) {
 }
 
 function ReactorCore({ heat = 1 }) {
-  // Replace sphere with capped cylinder + glowing ring to avoid sphere primitive look
   const bodyRef = useRef()
   const ringRef = useRef()
   useFrame((state) => {
@@ -319,7 +330,6 @@ function ReactorCore({ heat = 1 }) {
 }
 
 function EdgedBlock({ position=[0,0,0], size=[1,1,1], color="#4b5563", sloped=false }) {
-  // Non-boxy silhouette: thin shell + edges overlay
   const [w,h,d] = size
   const geo = useMemo(() => new THREE.BoxGeometry(w,h,d), [w,h,d])
   const edges = useMemo(() => new THREE.EdgesGeometry(geo), [geo])
@@ -338,14 +348,10 @@ function EdgedBlock({ position=[0,0,0], size=[1,1,1], color="#4b5563", sloped=fa
 }
 
 function Buildings() {
-  // Stylized silhouettes of the turbine hall, reactor building, and chimney with edge highlights
   return (
     <group>
-      {/* Turbine hall */}
       <EdgedBlock position={[2.5, 0.5, 0]} size={[4, 1, 2]} color="#2f3542" />
-      {/* Reactor building with slightly sloped cap */}
       <EdgedBlock position={[0, 0.8, -1.8]} size={[2, 1.6, 2]} color="#3b4252" sloped />
-      {/* Chimney */}
       <group position={[0.9, 2, -1.6]}>
         <mesh castShadow>
           <cylinderGeometry args={[0.18, 0.2, 4, 24]} />
@@ -360,11 +366,80 @@ function Buildings() {
   )
 }
 
-function Scene({ stage = 0, onExplode, forcePresetIndex, fullMode = false }) {
+function HeatHaze({ strength = 0.03 }) {
+  // Simple refractive-looking quads that wobble like hot air; not true screen refraction but sells the effect
+  const group = useRef()
+  const planes = useMemo(() => new Array(4).fill(0).map(() => ({
+    pos: new THREE.Vector3((Math.random()-0.5)*0.6, 0.6+Math.random()*0.6, (Math.random()-0.5)*0.6),
+    rot: new THREE.Euler(),
+    scale: 0.8 + Math.random()*0.6
+  })), [])
+  useFrame((state) => {
+    const t = state.clock.getElapsedTime()
+    planes.forEach((p, i) => {
+      const m = group.current.children[i]
+      if (!m) return
+      m.position.copy(p.pos)
+      m.rotation.set(Math.sin(t*0.6+i)*0.08, Math.cos(t*0.5+i*1.2)*0.08, 0)
+      const s = p.scale * (1.0 + Math.sin(t*2.0+i)*0.05)
+      m.scale.set(s, s, 1)
+      m.material.opacity = 0.08 + Math.abs(Math.sin(t*1.5+i))*0.06
+    })
+  })
+  return (
+    <group ref={group}>
+      {planes.map((p, i) => (
+        <mesh key={i} position={p.pos} rotation={p.rot}>
+          <planeGeometry args={[1.2, 1.2, 1, 1]} />
+          <meshStandardMaterial color="#ffffff" transparent opacity={0.1} roughness={1} metalness={0} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+function Scorch({ triggerKey }) {
+  const mat = useRef()
+  const [t0, setT0] = useState(0)
+  useEffect(() => { setT0(performance.now()) }, [triggerKey])
+  useFrame(() => {
+    if (!mat.current) return
+    const elapsed = (performance.now() - t0) / 1000
+    const radius = Math.min(12, elapsed * 6)
+    mat.current.opacity = THREE.MathUtils.clamp(0.4 - elapsed*0.1, 0, 0.4)
+    const s = Math.max(0.001, radius)
+    mat.current.userData.mesh.scale.set(s, s, s)
+  })
+  return (
+    <mesh rotation={[-Math.PI/2,0,0]} position={[0,0.01,0]} onUpdate={(m)=>{ if(mat.current) mat.current.userData.mesh = m; }}>
+      <circleGeometry args={[1, 64]} />
+      <meshBasicMaterial ref={mat} color="#111" transparent opacity={0} />
+    </mesh>
+  )
+}
+
+function CameraShake({ triggerKey }) {
+  // Subtle impulse and noise-based decay after explosion
+  const group = useRef()
+  const [t0, setT0] = useState(0)
+  useEffect(()=>{ setT0(performance.now()) }, [triggerKey])
+  useFrame((state) => {
+    const t = (performance.now() - t0) / 1000
+    const decay = Math.exp(-4*t)
+    const n = (hash => (Math.sin(hash*12.9898)*43758.5453)%1)
+    const jx = (Math.sin(state.clock.elapsedTime*40.0)*0.5 + Math.sin(state.clock.elapsedTime*23.0))*0.5
+    const jy = (Math.cos(state.clock.elapsedTime*36.0)*0.5 + Math.sin(state.clock.elapsedTime*19.0))*0.5
+    group.current.position.x = jx * 0.1 * decay
+    group.current.position.y = jy * 0.06 * decay
+    group.current.rotation.z = jx * 0.02 * decay
+  })
+  return <group ref={group} />
+}
+
+function Scene({ stage = 0, onExplode, forcePresetIndex, fullMode = false, explodeTick }) {
   const presetIndex = typeof forcePresetIndex === 'number' ? forcePresetIndex : stage
   const preset = STAGE_PRESETS[Math.min(STAGE_PRESETS.length - 1, Math.max(0, presetIndex))]
 
-  // Leva controls act as fine-tuning on top of preset
   const { energyScale, dragOffset } = useControls({
     energyScale: { value: 1.0, min: 0.25, max: 2.0, step: 0.05 },
     dragOffset: { value: 0.0, min: -0.02, max: 0.05, step: 0.002 },
@@ -373,18 +448,14 @@ function Scene({ stage = 0, onExplode, forcePresetIndex, fullMode = false }) {
   const effectiveEnergy = preset.blastEnergy * energyScale
   const effectiveDrag = Math.max(0.0, preset.drag + dragOffset)
 
-  // trigger shockwave on explosive stages
-  const shockKey = `${presetIndex}-${effectiveEnergy.toFixed(2)}`
-  useEffect(() => {
-    if (presetIndex >= 2 && onExplode) onExplode()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [presetIndex])
+  const shockKey = `${presetIndex}-${effectiveEnergy.toFixed(2)}-${fullMode?1:0}`
+  useEffect(() => { if (presetIndex >= 2 && onExplode) onExplode() }, [presetIndex])
 
   return (
     <>
       <color attach="background" args={["#0b1220"]} />
       <fog attach="fog" args={["#0b1220", 20, 120]} />
-      <ambientLight intensity={0.3} />
+      <ambientLight intensity={0.35} />
       <directionalLight position={[5, 8, 5]} intensity={1.4} castShadow />
       <Stars radius={50} depth={20} count={2000} factor={4} fade />
 
@@ -399,44 +470,31 @@ function Scene({ stage = 0, onExplode, forcePresetIndex, fullMode = false }) {
       <axesHelper args={[2]} position={[0, 0.02, 0]} />
 
       {presetIndex >= 2 && <Shockwave triggerKey={shockKey} />}
+      {presetIndex >= 2 && <Scorch triggerKey={shockKey} />}
+      <HeatHaze />
 
-      {/* Full mode renders multiple concurrent systems for a composite blast */}
       {fullMode ? (
         <group>
           {STAGE_PRESETS.map((p, idx) => (
             <group key={idx}>
-              <Particles
-                stage={idx}
-                count={Math.floor(p.count * (idx>=3 ? 0.6 : 0.4))}
-                blastEnergy={p.blastEnergy}
-                drag={p.drag}
-                wind={p.wind}
-                buoyancy={p.buoyancy}
-                anisotropyUp={p.anisotropyUp}
-                anisotropyXZ={p.anisotropyXZ}
-                verticalBias={p.verticalBias}
-                thermalDecay={p.thermalDecay}
-                colorsPair={p.colors}
-              />
+              {/* Hot fireball */}
+              <Particles stage={idx} count={Math.floor(p.count*0.35)} blastEnergy={p.blastEnergy} drag={p.drag*0.6} wind={p.wind} buoyancy={p.buoyancy*1.1} anisotropyUp={p.anisotropyUp} anisotropyXZ={p.anisotropyXZ} verticalBias={p.verticalBias} thermalDecay={p.thermalDecay} colorsPair={['#ffcf6b', '#ff5522']} additive sizeRange={[14,26]} noise={0.6} alphaMul={1.0} />
+              {/* Dense smoke */}
+              <Particles stage={idx} count={Math.floor(p.count*0.5)} blastEnergy={p.blastEnergy*0.7} drag={p.drag*1.3} wind={p.wind} buoyancy={p.buoyancy*0.9} anisotropyUp={p.anisotropyUp*0.8} anisotropyXZ={p.anisotropyXZ*1.1} verticalBias={p.verticalBias*0.8} thermalDecay={p.thermalDecay*0.8} colorsPair={['#111318', '#2b2f36']} additive={false} sizeRange={[28,48]} noise={0.9} alphaMul={0.9} />
+              {/* Embers/sparks */}
+              <Particles stage={idx} count={Math.floor(120* (idx>=2?1.2:0.4))} blastEnergy={p.blastEnergy*1.4} drag={0.01} wind={p.wind} buoyancy={0.3} anisotropyUp={0.4} anisotropyXZ={0.6} verticalBias={0.2} thermalDecay={1.2} colorsPair={['#ffdca8','#fff2ad']} additive sizeRange={[6,12]} noise={0.2} alphaMul={1.0} />
               <Debris stage={idx} energy={p.blastEnergy} />
             </group>
           ))}
         </group>
       ) : (
         <group>
-          <Particles
-            stage={presetIndex}
-            count={preset.count}
-            blastEnergy={effectiveEnergy}
-            drag={effectiveDrag}
-            wind={preset.wind}
-            buoyancy={preset.buoyancy}
-            anisotropyUp={preset.anisotropyUp}
-            anisotropyXZ={preset.anisotropyXZ}
-            verticalBias={preset.verticalBias}
-            thermalDecay={preset.thermalDecay}
-            colorsPair={preset.colors}
-          />
+          {/* Hot fireball */}
+          <Particles stage={presetIndex} count={Math.floor(preset.count*0.45)} blastEnergy={effectiveEnergy} drag={effectiveDrag*0.6} wind={preset.wind} buoyancy={preset.buoyancy*1.1} anisotropyUp={preset.anisotropyUp} anisotropyXZ={preset.anisotropyXZ} verticalBias={preset.verticalBias} thermalDecay={preset.thermalDecay} colorsPair={['#ffcf6b', '#ff5522']} additive sizeRange={[14,26]} noise={0.6} alphaMul={1.0} />
+          {/* Dense smoke */}
+          <Particles stage={presetIndex} count={Math.floor(preset.count*0.65)} blastEnergy={effectiveEnergy*0.7} drag={effectiveDrag*1.3} wind={preset.wind} buoyancy={preset.buoyancy*0.9} anisotropyUp={preset.anisotropyUp*0.8} anisotropyXZ={preset.anisotropyXZ*1.1} verticalBias={preset.verticalBias*0.8} thermalDecay={preset.thermalDecay*0.8} colorsPair={['#111318', '#2b2f36']} additive={false} sizeRange={[28,48]} noise={0.9} alphaMul={0.9} />
+          {/* Embers/sparks */}
+          <Particles stage={presetIndex} count={Math.floor(160* (presetIndex>=2?1.2:0.4))} blastEnergy={effectiveEnergy*1.3} drag={0.01} wind={preset.wind} buoyancy={0.3} anisotropyUp={0.4} anisotropyXZ={0.6} verticalBias={0.2} thermalDecay={1.2} colorsPair={['#ffdca8','#fff2ad']} additive sizeRange={[6,12]} noise={0.2} alphaMul={1.0} />
           <Debris stage={presetIndex} energy={effectiveEnergy} />
         </group>
       )}
@@ -464,12 +522,8 @@ class ErrorBoundary extends Component {
     super(props)
     this.state = { hasError: false, error: null }
   }
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error }
-  }
-  componentDidCatch(error, info) {
-    // no-op
-  }
+  static getDerivedStateFromError(error) { return { hasError: true, error } }
+  componentDidCatch(error, info) {}
   render() {
     if (this.state.hasError) {
       return (
@@ -489,28 +543,18 @@ export default function BlastSim({ stage = 0 }) {
   const [fullMode, setFullMode] = useState(false)
   const [localStage, setLocalStage] = useState(stage)
 
-  useEffect(() => {
-    setWebglOk(supportsWebGL())
-  }, [])
+  useEffect(() => { setWebglOk(supportsWebGL()) }, [])
 
-  // keep local in sync when not autoplaying
-  useEffect(() => {
-    if (!autoPlay) setLocalStage(stage)
-  }, [stage, autoPlay])
+  useEffect(() => { if (!autoPlay) setLocalStage(stage) }, [stage, autoPlay])
 
-  // autoplay sequence across all stages
   useEffect(() => {
     if (!autoPlay) return
     setLocalStage(0)
     let idx = 0
-    const steps = [1200, 1200, 800, 1200, 1200, 2000] // ms per stage
+    const steps = [1200, 1200, 800, 1200, 1200, 2000]
     const timer = setInterval(() => {
       idx += 1
-      if (idx >= STAGE_PRESETS.length) {
-        clearInterval(timer)
-        setAutoPlay(false)
-        return
-      }
+      if (idx >= STAGE_PRESETS.length) { clearInterval(timer); setAutoPlay(false); return }
       setLocalStage(idx)
     }, steps[Math.min(idx, steps.length-1)])
     return () => clearInterval(timer)
@@ -523,36 +567,22 @@ export default function BlastSim({ stage = 0 }) {
     <div className="relative w-full h-[560px] rounded-2xl overflow-hidden border border-slate-700 bg-slate-900">
       <Leva collapsed />
 
-      {/* Top-left HUD */}
       <div className="pointer-events-none absolute top-3 left-3 z-10 bg-slate-900/60 backdrop-blur-sm border border-slate-700 text-white text-xs px-2 py-1 rounded">
         {fullMode ? 'Composite: full sequence' : preset.title}
       </div>
 
-      {/* Controls */}
       <div className="absolute top-3 right-3 z-10 flex gap-2">
-        <button
-          onClick={() => { setFullMode(false); setAutoPlay(true) }}
-          className="px-3 py-1 rounded bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-semibold shadow"
-        >
-          Play sequence
-        </button>
-        <button
-          onClick={() => { setAutoPlay(false); setFullMode((v)=>!v) }}
-          className="px-3 py-1 rounded bg-sky-400 hover:bg-sky-300 text-black text-xs font-semibold shadow"
-        >
-          {fullMode ? 'Exit composite' : 'Play full blast'}
-        </button>
+        <button onClick={() => { setFullMode(false); setAutoPlay(true) }} className="px-3 py-1 rounded bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-semibold shadow">Play sequence</button>
+        <button onClick={() => { setAutoPlay(false); setFullMode((v)=>!v); setExplodeTick((t)=>t+1) }} className="px-3 py-1 rounded bg-sky-400 hover:bg-sky-300 text-black text-xs font-semibold shadow">{fullMode ? 'Exit composite' : 'Play full blast'}</button>
       </div>
 
       {!webglOk ? (
-        <div className="absolute inset-0 flex items-center justify-center text-slate-2 00">
-          WebGL not supported on this device/browser.
-        </div>
+        <div className="absolute inset-0 flex items-center justify-center text-slate-200">WebGL not supported on this device/browser.</div>
       ) : (
         <ErrorBoundary>
           <Suspense fallback={<div className="absolute inset-0 flex items-center justify-center text-slate-200">Loading 3D…</div>}>
             <Canvas shadows dpr={[1, 2]}>
-              <Scene stage={displayStage} fullMode={fullMode} onExplode={() => setExplodeTick((t)=>t+1)} />
+              <Scene stage={displayStage} fullMode={fullMode} onExplode={() => setExplodeTick((t)=>t+1)} explodeTick={explodeTick} />
             </Canvas>
           </Suspense>
         </ErrorBoundary>
